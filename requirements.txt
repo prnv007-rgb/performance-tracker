@@ -1,15 +1,10 @@
+streamlit==1.21.0
+pyrebase4==4.5.0  # Ensure this is compatible with your Firebase setup
+firebase-admin==5.2.0
+pandas==1.5.3
+Jinja2==3.1.4
+MarkupSafe==2.1.5
 colorama==0.4.6
 filelock==3.16.1
 fsspec==2024.9.0
-Jinja2==3.1.4
-MarkupSafe==2.1.5
-mpmath==1.3.0
-networkx==3.3
-numpy==1.23.5  # Adjust this if necessary for compatibility
-pillow==10.2.0
-setuptools==75.1.0
-sympy==1.13.3
-streamlit==1.21.0
-firebase-admin==5.2.0
-pyrebase4==4.5.0  # Updated to specify the version
-pandas==1.5.3  # Change to a compatible version
+networkx==3.3  # Only include if you're using it, otherwise remove
