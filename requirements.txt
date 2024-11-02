@@ -1,5 +1,5 @@
 streamlit==1.21.0
-pyrebase4==4.5.0  # Ensure this is compatible with your Firebase setup
+pyrebase4==4.5.0
 firebase-admin==5.2.0
 pandas==1.5.3
 Jinja2==3.1.4
@@ -7,4 +7,3 @@ MarkupSafe==2.1.5
 colorama==0.4.6
 filelock==3.16.1
 fsspec==2024.9.0
-networkx==3.3  # Only include if you're using it, otherwise remove
