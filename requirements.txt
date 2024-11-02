@@ -14,7 +14,3 @@ torchaudio==2.4.1+cu124
 torchvision==0.19.1+cu124
 tqdm==4.66.5
 typing_extensions==4.12.2
-streamlit==1.21.0  # Add this line
-pyrebase==3.0.27    # Add Pyrebase if not already included
-firebase-admin==5.2.0  # Add firebase-admin if not already included
-pandas==1.5.3  # Add this if you're using Pandas
