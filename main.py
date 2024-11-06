@@ -139,22 +139,33 @@ def fetch_student_info(firebase_uid):
 
 
 # Fetch grades for the student
-def fetch_grades(firebase_uid):
+def fetch_latest_grades(firebase_uid):
+    # Fetch all grades for the student
     grades_ref = db.collection("grades").where("student_uid", "==", firebase_uid).stream()
-    return [grade.to_dict() for grade in grades_ref]
+    grades_by_subject = {}
+
+    for grade in grades_ref:
+        grade_data = grade.to_dict()
+        subject_name = grade_data['subject_name']
+        
+        # Keep only the latest grade entry for each subject
+        # Since there's no timestamp, you can choose to just overwrite the existing entry
+        # This assumes the last entry fetched is the most recent, which may not always be true.
+        grades_by_subject[subject_name] = grade_data
+
+    # Return only the latest grade entries
+    return list(grades_by_subject.values())
 
 
 
 # Fetch assignments for the student
-def fetch_assignments(class_assigned):
+def fetch_class_assignments(class_assigned):
     assignments_ref = db.collection("assignments").where("class_assigned", "==", class_assigned).stream()
     formatted_assignments = []
     
     for assignment in assignments_ref:
         assignment_data = assignment.to_dict()
-        # Safely retrieve 'teacher_name' with a default of "Unknown" if it's missing
         teacher_name = assignment_data.get('teacher_name', 'Unknown')
-        # Format as "Assignment 1: Algebra (Maths) - Ann (teacher's name)"
         formatted_text = f"{assignment_data['title']} ({assignment_data['description']}) - {teacher_name}"
         formatted_assignments.append(formatted_text)
     
@@ -163,7 +174,29 @@ def fetch_assignments(class_assigned):
 
 # Display student dashboard
 
-
+def fetch_teacher_info(firebase_uid):
+    """
+    Fetches teacher information from Firestore based on the provided firebase_uid.
+    
+    Args:
+        firebase_uid (str): The unique identifier for the teacher in Firebase.
+        
+    Returns:
+        dict: A dictionary containing the teacher's information, or None if the teacher is not found.
+    """
+    try:
+        # Query the 'teachers' collection to find the document with the specified firebase_uid
+        teacher_ref = db.collection("teachers").where("firebase_uid", "==", firebase_uid).stream()
+        
+        # Get the first matching document (if any)
+        for doc in teacher_ref:
+            return doc.to_dict()  # Return teacher information as a dictionary
+        
+        # If no matching teacher is found, return None
+        return None
+    except Exception as e:
+        print(f"Error fetching teacher info: {e}")
+        return None
 def student_dashboard(firebase_uid):
     st.title("Student Dashboard")
 
@@ -178,7 +211,7 @@ def student_dashboard(firebase_uid):
 
         # Fetch grades
         st.write("### Grades Overview")
-        grades = fetch_grades(firebase_uid)
+        grades=fetch_latest_grades(firebase_uid)
 
         if grades:
             # Prepare data for plotting
@@ -215,7 +248,7 @@ def student_dashboard(firebase_uid):
 
         # Display assignments in text format
         st.write("### Assignment Details")
-        assignments = fetch_assignments(student_info.get('class'))
+        assignments = fetch_class_assignments(student_info.get('class'))
         if assignments:
             for i, assignment in enumerate(assignments, start=1):
                 st.write(f"Assignment {i}: {assignment}")
@@ -239,147 +272,231 @@ def fetch_students(class_assigned):
 # Fetch assigned subjects for a specific class
 def fetch_assigned_subjects(class_assigned):
     teachers_ref = db.collection("teachers").where("class_assigned", "==", class_assigned).stream()
-    assigned_subjects = []
+    
     for teacher in teachers_ref:
         teacher_data = teacher.to_dict()
-        # Assuming that 'subject_id' is stored in the teacher's document and we need to fetch the subject name
-        subject_doc = db.collection("subjects").document(teacher_data['subject_id']).get()
-        if subject_doc.exists:
-            assigned_subjects.append(subject_doc.to_dict()["subject_name"])
-    return assigned_subjects
+        
+        # Use get to safely access 'subject_id'
+        subject_id = teacher_data.get('subject_id')
+        if subject_id:
+            # Fetch the subject document
+            subject_doc = db.collection("subjects").document(subject_id).get()
+            if subject_doc.exists:
+                # Return the subject name directly
+                return subject_doc.to_dict().get("subject_name")
+    
+    # Return None if no subject was found
+    return None
+    
 
 
 
 
 
+def create_teacher_entry(name, subject_name, class_assigned, firebase_uid):
+    # Check if the subject exists first
+    subjects_ref = db.collection("subjects").where("subject_name", "==", subject_name).stream()
+    subject_ids = [subject.id for subject in subjects_ref]
 
+    if subject_ids:
+        subject_id = subject_ids[0]
+        teachers_ref = db.collection("teachers")
+        teacher_data = {
+            "name": name,
+            "subject_id": subject_id,
+            "class_assigned": class_assigned,
+            "firebase_uid": firebase_uid 
+        }
+        teachers_ref.add(teacher_data)
+        st.success("Teacher entry created successfully.")
+    else:
+        st.error("Subject does not exist. Teacher entry not created.")
+        
+def fetch_assigned_subjects_for_teacher(firebase_uid):
+    # Assuming you have a collection "teachers" in your database
+    teacher_ref = db.collection("teachers").where("firebase_uid", "==", firebase_uid).stream()
+    
+    subjects = {}  # Initialize an empty dictionary for subjects
+
+    # Iterate through the teacher records to collect registered subjects
+    for teacher in teacher_ref:
+        teacher_data = teacher.to_dict()
+        class_assigned = teacher_data.get('class_assigned')
+        subject_id = teacher_data.get('subject_id')
+        
+        # Ensure both class and subject are present to avoid assigning unintended subjects
+        if class_assigned and subject_id:
+            subject_ref = db.collection("subjects").document(subject_id).get()
+            
+            # Check if the subject document exists to avoid missing subjects
+            if subject_ref.exists:
+                subject_name = subject_ref.to_dict().get('subject_name')
+                
+                # Initialize the list for this class if it's not already in subjects
+                if class_assigned not in subjects:
+                    subjects[class_assigned] = []
+                
+                subjects[class_assigned].append(subject_name)
+    
+    # Return the collected subjects; if no subjects were found, return an empty dictionary
+    return subjects
+
+def fetch_assignments(class_name, subject_name):
+    assignments_ref = db.collection("assignments").where("class_assigned", "==", class_name).where("subject_name", "==", subject_name).stream()
+    assignments = []
+    
+    for assignment in assignments_ref:
+        assignments.append(assignment.to_dict())
+    
+    return assignments
 
 def teacher_panel(firebase_uid):
-    st.title("Teacher Panel")
     
-    # Initialize the number of classes
-    if "num_classes" not in st.session_state:
-        st.session_state.num_classes = 1
-    
-    # Define classes and initialize a dictionary to hold student counts and assigned subjects
+    if 'teacher_name' not in st.session_state:
+        st.session_state.teacher_name = "Default Teacher Name"
+
+    # Fetch teacher info and set session state
+    teacher_info = fetch_teacher_info(firebase_uid)
+    if teacher_info:
+        st.session_state.teacher_name = teacher_info.get('name')
+
+    # Initialize assigned subjects for each class with empty strings
     classes = ["10-A", "10-B", "10-C"]
-    student_counts = {class_name: 0 for class_name in classes}
-    assigned_subjects = {class_name: [] for class_name in classes}  # Track assigned subjects per class
+    if "assigned_subjects" not in st.session_state:
+        st.session_state.assigned_subjects = {class_name: "" for class_name in classes}
 
-    # Fetch student counts for each class
+    # Fetch the teacher's assigned subjects
+    teacher_subjects = fetch_assigned_subjects_for_teacher(firebase_uid)
+
+    # Set assigned subjects based on fetched subjects
     for class_name in classes:
-        student_counts[class_name] = len(fetch_students(class_name))  # Assuming fetch_students returns a list of students
-        assigned_subjects[class_name] = fetch_assigned_subjects(class_name)  # Fetch already assigned subjects for each class
-
-    # Displaying assigned classes and student counts
-    st.subheader("Assigned Classes with Student Counts")
-    for i in range(st.session_state.num_classes):
-        class_assigned = st.selectbox(f"Class Assigned {i + 1}", classes, index=0, key=f"class_assigned_{i}")
-
-        # Display the number of students in the selected class if the teacher is assigned
-        if student_counts[class_assigned] > 0:
-            st.write(f"{class_assigned}: {student_counts[class_assigned]} students")
+        if teacher_subjects and teacher_subjects.get(class_name):
+            st.session_state.assigned_subjects[class_name] = teacher_subjects[class_name][0]  # Set to the first subject found
         else:
-            st.write(f"{class_assigned}: Not assigned to this class or no students enrolled.")
+            st.session_state.assigned_subjects[class_name] = ""  # No subjects registered
 
-        # Fetch students in the selected class
-        students = fetch_students(class_assigned)
+    # Display assigned subjects
+    st.subheader("Assigned Subjects")
+    for class_name in classes:
+        subject = st.session_state.assigned_subjects.get(class_name, "")
+        if not subject:
+            st.write(f"**Class {class_name}:** No subjects registered.")
+        else:
+            st.write(f"**Class {class_name}:** {subject}")
+
+    # Section for assigning grades
+    st.subheader("Assign Grades")
+    selected_class = st.selectbox("Select Class to Assign Grades", classes)
+
+    subject_name = st.session_state.assigned_subjects[selected_class]
+    if subject_name:
+        st.write(f"**Subject:** {subject_name}")
+
+        # Fetch students for the selected class
+        students = fetch_students(selected_class)
+        student_count = len(students)
+
+        # Show total student count for the selected class
+        st.write(f"**Total Students in {selected_class}:** {student_count}")
 
         if students:
-            st.subheader(f"Assign Grades for {class_assigned}")
-            
-            # Select a student to grade
             student_names = [student['name'] for student in students]
-            selected_student = st.selectbox("Select Student", student_names, key=f"student_select_{i}")
-            
-            # Get the corresponding student's UID
+            selected_student = st.selectbox("Select Student", student_names)
             student_uid = next(student['firebase_uid'] for student in students if student['name'] == selected_student)
 
-            # Available subjects that are not currently assigned to the selected class
-            available_subjects = [subject for subject in get_subjects() if subject not in assigned_subjects[class_assigned]]
-
-            # Subject selection dropdown
-            if f'subject_selected_{i}' not in st.session_state:
-                # Only allow subject selection if not already set for this class
-                subject_name = st.selectbox("Select a Subject to Teach", available_subjects, key=f"subject_select_{i}")
-                st.session_state[f'subject_selected_{i}'] = subject_name  # Store the selected subject in session state
-                st.write(f"You have selected **{subject_name}** for {class_assigned}.")
-            else:
-                # Use the previously selected subject
-                subject_name = st.session_state[f'subject_selected_{i}']
-                st.write(f"**Subject:** {subject_name} (fixed)")
-
             # Input for grade
-            grade = st.number_input("Grade", min_value=0, max_value=100, key=f"grade_input_{i}")  # Assuming grades are between 0 and 100
+            grade = st.number_input("Grade", min_value=0, max_value=100, step=1)
 
             # Button to submit grade
-            if st.button("Submit Grade", key=f"submit_grade_{i}"):
-                submit_grade(student_uid, subject_name, grade)
-                # Optionally, store the assigned subject to prevent it from being selected again
-                assigned_subjects[class_assigned].append(subject_name)
+            if st.button("Submit Grade"):
+                try:
+                    submit_grade(student_uid, subject_name, grade)
+                    st.success("Grade submitted successfully!")
+                except Exception as e:
+                    st.error(f"Error submitting grade: {str(e)}")
+        else:
+            st.write("No students available to assign grades.")
+    else:
+        st.error("No subject registered for this class to assign grades.")
 
-    # New section for applying to teach a subject
+    # Section for applying to teach a new subject
     st.subheader("Apply to Teach a New Subject")
     class_to_teach = st.selectbox("Select Class to Teach", classes)
-    
-    # Fetch available subjects
-    available_subjects = get_subjects()  # Fetch the list of available subjects from the subject table
-    
-    # Remove subjects already assigned to the selected class
+
+    available_subjects = get_subjects()
     assigned_in_class = fetch_assigned_subjects(class_to_teach)
-    available_subjects = [subject for subject in available_subjects if subject not in assigned_in_class]
+    available_subjects = [subject for subject in available_subjects if subject not in (assigned_in_class or [])]
 
-    # Subject selection dropdown
-    selected_subject = st.selectbox("Select a Subject to Teach", available_subjects)
-    
-    # Button to apply for teaching the selected subject
-    if st.button("Apply to Teach"):
-        # Check if the subject is already assigned to another teacher in the selected class
-        existing_teachers = db.collection("teachers").where("class_assigned", "==", class_to_teach).where("subject_id", "==", selected_subject).stream()
-        if any(existing_teachers):
-            st.error(f"Error: The subject '{selected_subject}' is already being taught in {class_to_teach}.")
-        else:
-            # Fetch subject ID based on subject name
-            subjects_ref = db.collection("subjects").where("subject_name", "==", selected_subject).stream()
-            subject_id = next((subject.id for subject in subjects_ref), None)
 
-            if subject_id:
-                # Create the teacher entry
-                create_teacher_entry("Your Teacher Name", selected_subject, class_to_teach, firebase_uid)  # Replace with actual logic to fetch teacher's name
-                st.success(f"You are now assigned to teach {selected_subject} in {class_to_teach}.")
+    if available_subjects:
+        selected_subject = st.selectbox("Select a Subject to Teach", available_subjects)
+
+        if st.button("Apply to Teach"):
+            existing_teachers = db.collection("teachers").where("class_assigned", "==", class_to_teach).where("subject_id", "==", selected_subject).stream()
+            if any(existing_teachers):
+                st.error(f"The subject '{selected_subject}' is already assigned in {class_to_teach}.")
             else:
-                st.error(f"Error: The subject '{selected_subject}' does not exist.")
+                subjects_ref = db.collection("subjects").where("subject_name", "==", selected_subject).stream()
+                subject_id = next((subject.id for subject in subjects_ref), None)
 
+                if subject_id:
+                    # Update session state to reflect the new subject assignment
+                    st.session_state.assigned_subjects[class_to_teach] = selected_subject  # Replace previous subject
+                    create_teacher_entry(st.session_state.teacher_name, selected_subject, class_to_teach, firebase_uid)
+                    st.success(f"Assigned to teach {selected_subject} in {class_to_teach}.")
+                    st.rerun()  # Refresh the app to show updated subjects
+                else:
+                    st.error(f"Subject '{selected_subject}' does not exist.")
+    else:
+        st.write("No available subjects to teach for this class.")
+
+    # Post New Assignment Section
     st.subheader("Post New Assignment")
-    
-    # Input fields for posting assignments
-    title = st.text_input("Assignment Title")
-    description = st.text_area("Assignment Description")  # Added description field
-    due_date = st.date_input("Due Date")
+    class_assigned_for_assignment = st.selectbox("Select Class for Assignment", classes)
 
-    # Post assignment button
-    if st.button("Post Assignment"):
-        if title and description and due_date:
-            try:
-                # Pass the teacher's name to post_assignment
-                post_assignment(title, description, due_date, subject_name, class_assigned, "Your Teacher Name")  # Replace with the actual fetching logic
-            except Exception as e:
-                st.error(f"Failed to post assignment: {str(e)}")
-        else:
-            st.error("Please fill in all fields before posting the assignment.")
+    # Check if the teacher is registered for any subject in the selected class
+    subject_name = st.session_state.assigned_subjects[class_assigned_for_assignment]
+    if subject_name:
+        title = st.text_input("Assignment Title")
+        description = st.text_area("Assignment Description")
+        due_date = st.date_input("Due Date")
 
-    # Display current assignments in text format for the assigned classes
-    st.subheader("Current Assignments")
-    for i in range(st.session_state.num_classes):
-        current_class = st.selectbox(f"View Assignments for Class {i + 1}", classes, index=0, key=f"view_assignments_class_{i}")
-        assignments = fetch_assignments(current_class)
-        if assignments:
-            for j, assignment in enumerate(assignments, start=1):
-                st.write(f"Assignment {j}: {assignment}")
-        else:
-            st.write(f"No assignments available for class {current_class}.")
+        if st.button("Post Assignment"):
+            if title and description and due_date:
+                try:
+                    post_assignment(title, description, due_date, subject_name, class_assigned_for_assignment, st.session_state.teacher_name)
+                    st.success("Assignment posted successfully!")
+
+                    # Immediately fetch the assignments after posting
+                    assignments = fetch_assignments(class_assigned_for_assignment, subject_name)
+                    st.session_state.current_assignments[class_assigned_for_assignment] = assignments
+                except Exception as e:
+                    st.error(f"Failed to post assignment: {str(e)}")
+            else:
+                st.error("Please fill in all fields before posting the assignment.")
+    else:
+        st.error("No subject registered for this class to post an assignment.")
+
+
+
     
-    st.markdown("---")
+def post_assignment(title, description, due_date, subject_name, class_assigned_for_assignment, teacher_name):
+    # Create a dictionary to hold the assignment data
+    assignment_data = {
+        "title": title,
+        "description": description,
+        "due_date": due_date.isoformat(),  # Store due date in a standard format
+        "subject_name": subject_name,
+        "class_assigned": class_assigned_for_assignment,
+        "teacher_name": teacher_name  # Save the teacher's actual name
+    }
+    
+    # Add the assignment to the database
+    db.collection("assignments").add(assignment_data)
+
+
+
+
 
 
 
@@ -397,8 +514,46 @@ def get_subjects():
 
 
 def main():
-    st.title("Performance Tracker")
     
+
+# Set the page configuration
+    st.set_page_config(page_title="Student Performance Tracker", layout="wide")
+
+# Custom CSS for a 3D gradient theme
+    st.markdown("""
+<style>
+    .stApp {
+        background: linear-gradient(135deg, #84fab0, #8fd3f4); /* Gradient background */
+        color: #2c3e50; /* Dark text color for readability */
+        font-family: 'Arial', sans-serif;
+        padding: 20px;
+        border-radius: 15px; /* Rounded corners */
+    }
+
+    /* Adding some 3D effects */
+    .card {
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Shadow effect */
+        transition: transform 0.2s; /* Smooth hover effect */
+    }
+
+    .card:hover {
+        transform: scale(1.05); /* Scale up on hover */
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Example of a card element
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.title("Performance Tracker")
+    st.write("Welcome to the performance tracker. Here, you can view and analyze student performance.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Your application logic here...
+
+
+# Your application logic here...
+
+
     # Check if user is logged in
     if "firebase_uid" not in st.session_state:
         user_type = st.selectbox("Are you a:", ("Select", "Teacher", "Student"))
@@ -451,3 +606,4 @@ def main():
 if __name__ == "__main__":
     initialize_firestore_data()
     main()
+
